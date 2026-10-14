@@ -1,119 +1,172 @@
-const API_URL = 'endpoint_url';
-const API_KEY = 'api_key';
+const API_URL = 'https://rishit-2008--image-generator-model-generate.modal.run';
+const API_KEY = 'ak-QJrbfT0G2V2h3sfS627aRm';
 
 const promptInput = document.getElementById('prompt');
 const generateButton = document.getElementById('generate');
 const loadingDiv = document.getElementById('loading');
-const errorDiv = document.getElementById('error');
 const gallery = document.getElementById('gallery');
+const lightbox = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightbox-img');
+const lightboxPrompt = document.getElementById('lightbox-prompt');
 
 
 window.addEventListener('load', () => {
-    const storedImages = JSON.parse(localStorage.getItem('imageGallery')) || [];
-    storedImages.forEach(({ base64, prompt }) => {
-        addImageToGallery(base64, prompt, false);
+    const saved = JSON.parse(localStorage.getItem('imageGallery')) || [];
+    saved.forEach(({ base64, prompt, duration }) => {
+        addImageToGallery(base64, prompt, duration, false);
     });
 });
 
 generateButton.addEventListener('click', generateImage);
 
+promptInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') generateImage();
+});
+
 async function generateImage() {
-    const prompt = promptInput.value.trim();
-    if (!prompt) {
-        showError('Please enter a prompt');
+    const userPrompt = promptInput.value.trim();
+    if (!userPrompt) {
+        showToast('Please enter a prompt', 'error');
         return;
     }
 
     generateButton.disabled = true;
     loadingDiv.style.display = 'block';
-    errorDiv.style.display = 'none';
+
+    const startTime = Date.now();
 
     try {
-        const response = await fetch(`${API_URL}?prompt=${encodeURIComponent(prompt)}`, {
-            headers: {
-                'X-API-KEY': API_KEY
-            }
-        });
-
+        const response = await fetch(
+            API_URL + '?prompt=' + encodeURIComponent(userPrompt) + '&api_key=' + encodeURIComponent(API_KEY)
+        );
         if (!response.ok) {
-            throw new Error(`Error: ${response.status}`);
+            const e = await response.json().catch(() => ({}));
+            throw new Error(e.error || 'Server error: ' + response.status);
         }
 
-        const blob = await response.blob();
-        const base64 = await blobToBase64(blob);
+        const data = await response.json();
+        if (!data.image) throw new Error('No image returned');
 
-        addImageToGallery(base64, prompt);
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
+        addImageToGallery(data.image, userPrompt, duration);
         promptInput.value = '';
-
-    } catch (error) {
-        showError('Failed to generate image. Please try again.');
-        console.error('Error:', error);
+        showToast(`Generated in ${duration}s`, 'success');
+    } catch (err) {
+        showToast(err.message || 'Failed to generate image. Please try again.', 'error');
+        console.error('Error:', err);
     } finally {
         generateButton.disabled = false;
         loadingDiv.style.display = 'none';
     }
 }
 
-function showError(message) {
-    errorDiv.textContent = message;
-    errorDiv.style.display = 'block';
-}
-
-function addImageToGallery(base64, prompt, saveToLocalStorage = true) {
+function addImageToGallery(imageData, promptText, duration, save = true) {
     const container = document.createElement('div');
     container.className = 'image-container';
 
     const img = document.createElement('img');
-    img.src = base64;
+    img.src = imageData;
+    img.alt = promptText;
     img.className = 'generated-image';
-    img.alt = prompt;
+    img.addEventListener('click', () => openLightbox(imageData, promptText));
 
-    const promptText = document.createElement('p');
-    promptText.className = 'prompt-text';
-    promptText.textContent = prompt;
+    const p = document.createElement('p');
+    p.className = 'prompt-text';
+    p.textContent = promptText;
 
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'delete-btn';
-    deleteButton.textContent = 'X';
-    deleteButton.addEventListener('click', () => {
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+
+    if (duration) {
+        const timer = document.createElement('span');
+        timer.className = 'timer-badge';
+        timer.textContent = duration + 's';
+        actions.appendChild(timer);
+    }
+
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'action-btn download-btn';
+    downloadBtn.title = 'Download';
+    downloadBtn.innerHTML = '&#8595;';
+    downloadBtn.addEventListener('click', () => downloadImage(imageData, promptText));
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'action-btn delete-btn';
+    deleteBtn.title = 'Delete';
+    deleteBtn.innerHTML = '&times;';
+    deleteBtn.addEventListener('click', () => {
         container.remove();
-        deleteImageFromLocalStorage(base64);
+        deleteImageFromStorage(imageData);
     });
+
+    actions.appendChild(downloadBtn);
+    actions.appendChild(deleteBtn);
 
     container.appendChild(img);
-    container.appendChild(promptText);
-    container.appendChild(deleteButton);
+    container.appendChild(p);
+    container.appendChild(actions);
     gallery.insertBefore(container, gallery.firstChild);
 
-    if (saveToLocalStorage) {
-        saveImageToLocalStorage(base64, prompt);
-    }
+    if (save) saveImageToStorage(imageData, promptText, duration);
 }
 
-function saveImageToLocalStorage(base64, prompt) {
-    const storedImages = JSON.parse(localStorage.getItem('imageGallery')) || [];
-    storedImages.push({ base64, prompt });
-    localStorage.setItem('imageGallery', JSON.stringify(storedImages));
+function openLightbox(imageData, promptText) {
+    lightboxImg.src = imageData;
+    lightboxPrompt.textContent = promptText;
+    lightbox.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    document.getElementById('lightbox-download').onclick = () => downloadImage(imageData, promptText);
 }
 
-function deleteImageFromLocalStorage(base64) {
-    const storedImages = JSON.parse(localStorage.getItem('imageGallery')) || [];
-    const updatedImages = storedImages.filter(image => image.base64 !== base64);
-    localStorage.setItem('imageGallery', JSON.stringify(updatedImages));
+function closeLightbox() {
+    lightbox.classList.remove('active');
+    document.body.style.overflow = '';
 }
 
-async function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
-promptInput.addEventListener('keypress', function(event) {
-    if (event.key === 'Enter') {
-        generateImage();
-    }
+lightbox.addEventListener('click', (e) => {
+    if (e.target === lightbox) closeLightbox();
 });
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeLightbox();
+});
+
+document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+
+
+function downloadImage(imageData, promptText) {
+    const filename = promptText.slice(0, 40).replace(/[^a-z0-9]/gi, '_').toLowerCase() + '.jpg';
+    const a = document.createElement('a');
+    a.href = imageData;
+    a.download = filename;
+    a.click();
+}
+
+
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    document.getElementById('toast-container').appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove());
+    }, 3000);
+}
+
+function saveImageToStorage(imageData, promptText, duration) {
+    const saved = JSON.parse(localStorage.getItem('imageGallery')) || [];
+    saved.push({ base64: imageData, prompt: promptText, duration });
+    localStorage.setItem('imageGallery', JSON.stringify(saved));
+}
+
+function deleteImageFromStorage(imageData) {
+    const saved = JSON.parse(localStorage.getItem('imageGallery')) || [];
+    const updated = saved.filter(item => item.base64 !== imageData);
+    localStorage.setItem('imageGallery', JSON.stringify(updated));
+}
